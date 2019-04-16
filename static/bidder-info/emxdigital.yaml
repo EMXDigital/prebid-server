@@ -1,0 +1,7 @@
+maintainer:
+  email: "git@emxdigital.com"
+capabilities:
+  site:
+    mediaTypes:
+      - banner
+      - video
