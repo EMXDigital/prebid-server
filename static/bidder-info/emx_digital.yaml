@@ -1,0 +1,7 @@
+maintainer:
+  email: "adops@emxdigital.com"
+capabilities:
+  site:
+    mediaTypes:
+      - banner
+      - video
