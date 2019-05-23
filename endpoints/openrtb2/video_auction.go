@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/buger/jsonparser"
-	"github.com/prebid/prebid-server/errortypes"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -14,7 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanphx/json-patch"
+	"github.com/buger/jsonparser"
+	jsonpatch "github.com/evanphx/json-patch"
+	"github.com/prebid/prebid-server/errortypes"
+
 	"github.com/golang/glog"
 	"github.com/julienschmidt/httprouter"
 	"github.com/mxmCherry/openrtb"
@@ -29,14 +30,14 @@ import (
 
 var defaultRequestTimeout int64 = 5000
 
-func NewVideoEndpoint(ex exchange.Exchange, validator openrtb_ext.BidderParamValidator, requestsById stored_requests.Fetcher, cfg *config.Configuration, met pbsmetrics.MetricsEngine, pbsAnalytics analytics.PBSAnalyticsModule, disabledBidders map[string]string, defReqJSON []byte, bidderMap map[string]openrtb_ext.BidderName, categories stored_requests.CategoryFetcher) (httprouter.Handle, error) {
+func NewVideoEndpoint(ex exchange.Exchange, validator openrtb_ext.BidderParamValidator, requestsById stored_requests.Fetcher, videoFetcher stored_requests.Fetcher, categories stored_requests.CategoryFetcher, cfg *config.Configuration, met pbsmetrics.MetricsEngine, pbsAnalytics analytics.PBSAnalyticsModule, disabledBidders map[string]string, defReqJSON []byte, bidderMap map[string]openrtb_ext.BidderName) (httprouter.Handle, error) {
 
 	if ex == nil || validator == nil || requestsById == nil || cfg == nil || met == nil {
 		return nil, errors.New("NewVideoEndpoint requires non-nil arguments.")
 	}
 	defRequest := defReqJSON != nil && len(defReqJSON) > 0
 
-	return httprouter.Handle((&endpointDeps{ex, validator, requestsById, cfg, met, pbsAnalytics, disabledBidders, defRequest, defReqJSON, bidderMap, categories}).VideoAuctionEndpoint), nil
+	return httprouter.Handle((&endpointDeps{ex, validator, requestsById, videoFetcher, categories, cfg, met, pbsAnalytics, disabledBidders, defRequest, defReqJSON, bidderMap}).VideoAuctionEndpoint), nil
 }
 
 /*
@@ -113,10 +114,9 @@ func (deps *endpointDeps) VideoAuctionEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err == nil {
-		storedRequest, err := loadStoredVideoRequest(storedRequestId)
-		if err != nil {
-			errL := []error{err}
-			handleError(labels, w, errL, ao)
+		storedRequest, errs := deps.loadStoredVideoRequest(context.Background(), storedRequestId)
+		if len(errs) > 0 {
+			handleError(labels, w, errs, ao)
 			return
 		}
 
@@ -356,7 +356,7 @@ func minMax(array []int) (int, int) {
 	return min, max
 }
 
-func buildVideoResponse(bidresponse *openrtb.BidResponse, podErrors []PodError) (*openrtb_ext.BidResponseVideo, error) { //should be video response
+func buildVideoResponse(bidresponse *openrtb.BidResponse, podErrors []PodError) (*openrtb_ext.BidResponseVideo, error) {
 
 	adPods := make([]*openrtb_ext.AdPod, 0)
 	for _, seatBid := range bidresponse.SeatBid {
@@ -366,15 +366,18 @@ func buildVideoResponse(bidresponse *openrtb.BidResponse, podErrors []PodError) 
 			if err := json.Unmarshal(bid.Ext, &tempRespBidExt); err != nil {
 				return nil, err
 			}
+			if tempRespBidExt.Prebid.Targeting[string(openrtb_ext.HbVastCacheKey)] == "" {
+				continue
+			}
 
 			impId := bid.ImpID
 			podNum := strings.Split(impId, "_")[0]
 			podId, _ := strconv.ParseInt(podNum, 0, 64)
 
 			videoTargeting := openrtb_ext.VideoTargeting{
-				Hb_pb:         tempRespBidExt.Prebid.Targeting["hb_pb"],
-				Hb_pb_cat_dur: tempRespBidExt.Prebid.Targeting["hb_pb_cat_dur"],
-				Hb_cache_id:   tempRespBidExt.Prebid.Targeting["hb_uuid"],
+				Hb_pb:         tempRespBidExt.Prebid.Targeting[string(openrtb_ext.HbpbConstantKey)],
+				Hb_pb_cat_dur: tempRespBidExt.Prebid.Targeting[string(openrtb_ext.HbCategoryDurationKey)],
+				Hb_cache_id:   tempRespBidExt.Prebid.Targeting[string(openrtb_ext.HbVastCacheKey)],
 			}
 
 			adPod := findAdPod(podId, adPods)
@@ -389,6 +392,13 @@ func buildVideoResponse(bidresponse *openrtb.BidResponse, podErrors []PodError) 
 
 		}
 	}
+
+	if len(adPods) == 0 {
+		//means there is a global cache error, we need to reject all bids
+		err := errors.New("caching failed for all bids")
+		return nil, err
+	}
+
 	videoResponse := openrtb_ext.BidResponseVideo{}
 
 	// If there were incorrect pods, we put them back to response with error message
@@ -416,9 +426,10 @@ func findAdPod(podInd int64, pods []*openrtb_ext.AdPod) *openrtb_ext.AdPod {
 	return nil
 }
 
-func loadStoredVideoRequest(storedRequestId string) ([]byte, error) {
-	jsonString := []byte(`{"accountid": "11223344", "site": {"page": "mygame.foo.com"}}`)
-	return jsonString, nil
+func (deps *endpointDeps) loadStoredVideoRequest(ctx context.Context, storedRequestId string) ([]byte, []error) {
+	storedRequests, _, errs := deps.videoFetcher.FetchRequests(ctx, []string{storedRequestId}, []string{})
+	jsonString := storedRequests[storedRequestId]
+	return jsonString, errs
 }
 
 func getVideoStoredRequestId(request []byte) (string, error) {
@@ -563,7 +574,7 @@ func (deps *endpointDeps) validateVideoRequest(req *openrtb_ext.BidRequestVideo)
 	for ind, pod := range req.PodConfig.Pods {
 		podErr := PodError{}
 
-		if podIdsSet[pod.PodId] == true {
+		if podIdsSet[pod.PodId] {
 			err := fmt.Sprintf("request duplicated required field: PodConfig.Pods.PodId, Pod id: %d", pod.PodId)
 			podErr.ErrMsgs = append(podErr.ErrMsgs, err)
 		} else {

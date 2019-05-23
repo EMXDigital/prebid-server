@@ -36,6 +36,8 @@ type Configuration struct {
 	DataCache       DataCache          `mapstructure:"datacache"`
 	StoredRequests  StoredRequests     `mapstructure:"stored_requests"`
 	CategoryMapping StoredRequestsSlim `mapstructure:"category_mapping"`
+	// Note that StoredVideo refers to stored video requests, and has nothing to do with caching video creatives.
+	StoredVideo StoredRequestsSlim `mapstructure:"stored_video_req"`
 
 	// Adapters should have a key for every openrtb_ext.BidderName, converted to lower-case.
 	// Se also: https://github.com/spf13/viper/issues/371#issuecomment-335388559
@@ -432,7 +434,7 @@ func (cfg *Configuration) setDerivedDefaults() {
 	// openrtb_ext.BidderRubicon doesn't have a good default.
 	setDefaultUsersync(cfg.Adapters, openrtb_ext.BidderSomoaudience, "https://publisher-east.mobileadtrading.com/usersync?ru="+url.QueryEscape(externalURL)+"%2Fsetuid%3Fbidder%3Dsomoaudience%26gdpr%3D{{.GDPR}}%26gdpr_consent%3D{{.GDPRConsent}}%26uid%3D%24%7BUID%7D")
 	setDefaultUsersync(cfg.Adapters, openrtb_ext.BidderSovrn, "https://ap.lijit.com/pixel?redir="+url.QueryEscape(externalURL)+"%2Fsetuid%3Fbidder%3Dsovrn%26gdpr%3D{{.GDPR}}%26gdpr_consent%3D{{.GDPRConsent}}%26uid%3D%24UID")
-	setDefaultUsersync(cfg.Adapters, openrtb_ext.BidderSonobi, "https://sync.go.sonobi.com/us.gif?loc="+url.QueryEscape(externalURL)+"%2Fsetuid%3Fbidder%3Dsonobi%26consent_string%3D{{.GDPR}}%26gdpr%3D{{.GDPRConsent}}%26uid%3D%24UID")
+	setDefaultUsersync(cfg.Adapters, openrtb_ext.BidderSonobi, "https://sync.go.sonobi.com/us.gif?loc="+url.QueryEscape(externalURL)+"%2Fsetuid%3Fbidder%3Dsonobi%26consent_string%3D{{.GDPR}}%26gdpr%3D{{.GDPRConsent}}%26uid%3D%5BUID%5D")
 	setDefaultUsersync(cfg.Adapters, openrtb_ext.BidderYieldmo, "https://ads.yieldmo.com/pbsync?gdpr={{.GDPR}}&gdpr_consent={{.GDPRConsent}}&redirectUri="+url.QueryEscape(externalURL)+"%2Fsetuid%3Fbidder%3Dyieldmo%26gdpr%3D{{.GDPR}}%26gdpr_consent%3D{{.GDPRConsent}}%26uid%3D%24UID")
 	setDefaultUsersync(cfg.Adapters, openrtb_ext.BidderGamoshi, "https://rtb.gamoshi.io/pix/0000/scm?gdpr={{.GDPR}}&consent={{.GDPRConsent}}&rurl="+url.QueryEscape(externalURL)+"%2Fsetuid%3Fbidder%3Dgamoshi%26gdpr%3D{{.GDPR}}%26gdpr_consent%3D{{.GDPRConsent}}%26uid%3D%5Bgusr%5D")
 
@@ -500,6 +502,7 @@ func SetupViper(v *viper.Viper, filename string) {
 	v.SetDefault("datacache.ttl_seconds", 0)
 	v.SetDefault("category_mapping.filesystem.enabled", true)
 	v.SetDefault("category_mapping.filesystem.directorypath", "./static/category-mapping")
+	v.SetDefault("category_mapping.http.endpoint", "")
 	v.SetDefault("stored_requests.filesystem", false)
 	v.SetDefault("stored_requests.directorypath", "./stored_requests/data/by_id")
 	v.SetDefault("stored_requests.postgres.connection.dbname", "")
@@ -527,6 +530,31 @@ func SetupViper(v *viper.Viper, filename string) {
 	v.SetDefault("stored_requests.http_events.amp_endpoint", "")
 	v.SetDefault("stored_requests.http_events.refresh_rate_seconds", 0)
 	v.SetDefault("stored_requests.http_events.timeout_ms", 0)
+	// stored_video is short for stored_video_requests.
+	// PBS is not in the business of storing video content beyond the normal prebid cache system.
+	v.SetDefault("stored_video_req.filesystem.enabled", false)
+	v.SetDefault("stored_video_req.filesystem.directorypath", "")
+	v.SetDefault("stored_video_req.postgres.connection.dbname", "")
+	v.SetDefault("stored_video_req.postgres.connection.host", "")
+	v.SetDefault("stored_video_req.postgres.connection.port", 0)
+	v.SetDefault("stored_video_req.postgres.connection.user", "")
+	v.SetDefault("stored_video_req.postgres.connection.password", "")
+	v.SetDefault("stored_video_req.postgres.fetcher.query", "")
+	v.SetDefault("stored_video_req.postgres.initialize_caches.timeout_ms", 0)
+	v.SetDefault("stored_video_req.postgres.initialize_caches.query", "")
+	v.SetDefault("stored_video_req.postgres.poll_for_updates.refresh_rate_seconds", 0)
+	v.SetDefault("stored_video_req.postgres.poll_for_updates.timeout_ms", 0)
+	v.SetDefault("stored_video_req.postgres.poll_for_updates.query", "")
+	v.SetDefault("stored_video_req.http.endpoint", "")
+	v.SetDefault("stored_video_req.in_memory_cache.type", "none")
+	v.SetDefault("stored_video_req.in_memory_cache.ttl_seconds", 0)
+	v.SetDefault("stored_video_req.in_memory_cache.request_cache_size_bytes", 0)
+	v.SetDefault("stored_video_req.in_memory_cache.imp_cache_size_bytes", 0)
+	v.SetDefault("stored_video_req.cache_events.enabled", false)
+	v.SetDefault("stored_video_req.cache_events.endpoint", "")
+	v.SetDefault("stored_video_req.http_events.endpoint", "")
+	v.SetDefault("stored_video_req.http_events.refresh_rate_seconds", 0)
+	v.SetDefault("stored_video_req.http_events.timeout_ms", 0)
 
 	for _, bidder := range openrtb_ext.BidderMap {
 		setBidderDefaults(v, strings.ToLower(string(bidder)))
