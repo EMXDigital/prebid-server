@@ -1,11 +1,11 @@
 package emx_digital
 
 import (
-    “testing”
+	"testing"
 
-    “github.com/prebid/prebid-server/adapters/adapterstest”
+	"github.com/prebid/prebid-server/adapters/adapterstest"
 )
 
 func TestJsonSamples(t *testing.T) {
-    adapterstest.RunJSONBidderTest(t, “emx_digitaltest”, new(Emx_DigitalAdapter))
+	adapterstest.RunJSONBidderTest(t, "emx_digitaltest", NewEMXDigitalBidder("https://hb.emxdgt.com"))
 }

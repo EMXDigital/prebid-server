@@ -29,7 +29,7 @@ const (
 	BidderBrightroll     BidderName = "brightroll"
 	BidderConsumable     BidderName = "consumable"
 	BidderConversant     BidderName = "conversant"
-	BidderEmx_Digital    BidderName = "emx_digital"
+	BidderEmxDigital     BidderName = "emx_digital"
 	BidderEPlanning      BidderName = "eplanning"
 	BidderFacebook       BidderName = "audienceNetwork"
 	BidderGamoshi        BidderName = "gamoshi"
@@ -61,7 +61,7 @@ var BidderMap = map[string]BidderName{
 	"brightroll":      BidderBrightroll,
 	"consumable":      BidderConsumable,
 	"conversant":      BidderConversant,
-	"emx_digital":     BidderEmx_Digital,
+	"emx_digital":     BidderEmxDigital,
 	"eplanning":       BidderEPlanning,
 	"gamoshi":         BidderGamoshi,
 	"grid":            BidderGrid,

@@ -20,7 +20,7 @@ import (
 // var Endpoint = "https://hb.emxdgt.com"
 
 // ---- type definitions ----
-type Emx_DigitalAdapter struct {
+type EmxDigitalAdapter struct {
 	endpoint string
 }
 
@@ -38,7 +38,7 @@ type responseImp struct {
 // --- functionality ---
 // unpack pbs requests into http requests to fetch bids
 // , req *pbs.PBSRequest
-func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.RequestData, []error) {
+func (a *EmxDigitalAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.RequestData, []error) {
 	now := time.Now()
 	// create endpoint
 	a.endpoint += "?t=" + strconv.FormatInt(1000, 10) /* strconv.FormatInt(req.TimeoutMillis, 10) */ + "&ts=" + strconv.FormatInt(now.Unix(), 10)
@@ -59,7 +59,7 @@ func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.Requ
 
 	return []*adapters.RequestData{{
 		Method:  "POST",
-		Uri:     Endpoint, //a.endpoint,
+		Uri:     a.endpoint,
 		Body:    reqJSON,
 		Headers: headers,
 	}}, errors
@@ -67,7 +67,7 @@ func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.Requ
 }
 
 // unpack server responses into bids.
-func (a *EmxAdapter) MakeBids(internalRequest *openrtb.BidRequest, externalRequest *adapters.RequestData, response *adapters.ResponseData) (*adapters.BidderResponse, []error) {
+func (a *EmxDigitalAdapter) MakeBids(internalRequest *openrtb.BidRequest, externalRequest *adapters.RequestData, response *adapters.ResponseData) (*adapters.BidderResponse, []error) {
 
 	os.Stdout.Write(response.Body)
 	// fmt.Printf("%T\n", response)
@@ -134,6 +134,6 @@ func BadServerResponse(msg string) *errortypes.BadServerResponse {
 }
 
 // instantiate new Adapter for PBS
-func NewEmx_DigitalBidder(endpoint string) *EmxAdapter {
-	return &Emx_DigitalAdapter{endpoint}
+func NewEmxDigitalBidder(endpoint string) *EmxDigitalAdapter {
+	return &EmxDigitalAdapter{endpoint}
 }

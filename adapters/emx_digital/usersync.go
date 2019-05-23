@@ -1,12 +1,12 @@
 package emx_digital
 
 import (
-    “text/template”
+	"text/template"
 
-    “github.com/prebid/prebid-server/adapters”
-    “github.com/prebid/prebid-server/usersync”
+	"github.com/prebid/prebid-server/adapters"
+	"github.com/prebid/prebid-server/usersync"
 )
 
-func New_lSyncer(temp *template.Template) usersync.Usersyncer {
-    return adapters.NewSyncer(“emx_digital”, 0, temp, adapters.SyncTypeIframe)
+func NewEMXDigitalSyncer(temp *template.Template) usersync.Usersyncer {
+	return adapters.NewSyncer("emx_digital", 0, temp, adapters.SyncTypeIframe)
 }

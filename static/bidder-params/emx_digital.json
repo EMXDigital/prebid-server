@@ -10,7 +10,7 @@
       },
       "bidfloor": {
         "type": "number",
-        "description": "The price floor for the bid"
+        "description": "The minimum price acceptable for a bid"
       }
     },
 
