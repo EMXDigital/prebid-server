@@ -16,33 +16,32 @@ import (
 	"github.com/prebid/prebid-server/errortypes"
 )
 
-// --- globals ---
-var Endpoint = "https://hb.emxdgt.com"
+// // --- globals ---
+// var Endpoint = "https://hb.emxdgt.com"
 
-// ---- type definitions ----
 type EmxAdapter struct {
-	// http *adapters.HTTPAdapter
-	// URI string
+	endpoint string
 }
 
-type responseImp struct {
-	ID     string `json:"id"`
-	Price  string `json:"price"`
-	AdM    string `json:"adm"`
-	CrID   string `json:"crid"`
-	Width  uint64 `json:"w,omitempty"`
-	Height uint64 `json:"h,omitempty"`
-	Secure uint64 `json:"secure"`
-	tid    uint64 `json:"secure"`
-}
+// type responseImp struct {
+// 	ID     string `json:"id"`
+// 	Price  string `json:"price"`
+// 	AdM    string `json:"adm"`
+// 	CrID   string `json:"crid"`
+// 	Width  uint64 `json:"w,omitempty"`
+// 	Height uint64 `json:"h,omitempty"`
+// 	Secure uint64 `json:"secure"`
+// 	tid    uint64 `json:"secure"`
+// }
 
-// --- functionality ---
+// --- MAIN  ---
 // unpack pbs requests into http requests to fetch bids
 // , req *pbs.PBSRequest
+
 func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.RequestData, []error) {
 	now := time.Now()
 	// create endpoint
-	Endpoint += "?t=" + strconv.FormatInt(1000, 10) /* strconv.FormatInt(req.TimeoutMillis, 10) */ + "&ts=" + strconv.FormatInt(now.Unix(), 10)
+	a.endpoint += "?t=" + strconv.FormatInt(1000, 10) /* strconv.FormatInt(req.TimeoutMillis, 10) */ + "&ts=" + strconv.FormatInt(now.Unix(), 10)
 
 	var errors = make([]error, 0)
 
@@ -56,11 +55,11 @@ func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.Requ
 	headers.Add("Content-Type", "application/json;charset=utf-8")
 
 	os.Stdout.Write(reqJSON)
-	fmt.Printf("%T\n", request)
+	// fmt.Printf("%T\n", request)
 
 	return []*adapters.RequestData{{
 		Method:  "POST",
-		Uri:     Endpoint, //a.endpoint,
+		Uri:     a.endpoint,
 		Body:    reqJSON,
 		Headers: headers,
 	}}, errors
@@ -135,6 +134,8 @@ func BadServerResponse(msg string) *errortypes.BadServerResponse {
 }
 
 // instantiate new Adapter for PBS
-func NewEmxBidder() *EmxAdapter {
-	return &EmxAdapter{}
+func NewEmxBidder(endpoint string) *EmxAdapter {
+	return &EmxAdapter{
+		endpoint: endpoint,
+	}
 }
