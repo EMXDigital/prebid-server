@@ -81,7 +81,7 @@ func MakeOpenRTBGeneric(req *pbs.PBSRequest, bidder *pbs.PBSBidder, bidderFamily
 	imps := make([]openrtb.Imp, 0, len(bidder.AdUnits)*len(allowedMediatypes))
 	for _, unit := range bidder.AdUnits {
 		if len(unit.Sizes) <= 0 {
-			continue
+			continue 
 		}
 		unitMediaTypes := commonMediaTypes(unit.MediaTypes, allowedMediatypes)
 		if len(unitMediaTypes) == 0 {

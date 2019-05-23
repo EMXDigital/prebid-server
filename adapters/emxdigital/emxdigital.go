@@ -14,7 +14,6 @@ import (
 	"github.com/mxmCherry/openrtb"
 	"github.com/prebid/prebid-server/adapters"
 	"github.com/prebid/prebid-server/errortypes"
-	"github.com/prebid/prebid-server/pbs"
 )
 
 // --- globals ---
@@ -39,10 +38,11 @@ type responseImp struct {
 
 // --- functionality ---
 // unpack pbs requests into http requests to fetch bids
-func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest, req *pbs.PBSRequest) ([]*adapters.RequestData, []error) {
+// , req *pbs.PBSRequest
+func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.RequestData, []error) {
 	now := time.Now()
 	// create endpoint
-	Endpoint += "?t=" + /*strconv.FormatInt(1000, 10) */ strconv.FormatInt(req.TimeoutMillis, 10) + "&ts=" + strconv.FormatInt(now.Unix(), 10)
+	Endpoint += "?t=" + strconv.FormatInt(1000, 10) /* strconv.FormatInt(req.TimeoutMillis, 10) */ + "&ts=" + strconv.FormatInt(now.Unix(), 10)
 
 	var errors = make([]error, 0)
 
@@ -56,7 +56,7 @@ func (a *EmxAdapter) MakeRequests(request *openrtb.BidRequest, req *pbs.PBSReque
 	headers.Add("Content-Type", "application/json;charset=utf-8")
 
 	os.Stdout.Write(reqJSON)
-	// fmt.Printf("%T\n", request)
+	fmt.Printf("%T\n", request)
 
 	return []*adapters.RequestData{{
 		Method:  "POST",

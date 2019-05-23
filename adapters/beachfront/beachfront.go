@@ -12,7 +12,7 @@ import (
 
 	"github.com/mxmCherry/openrtb"
 )
-
+ 
 const Seat = "beachfront"
 const BidCapacity = 5
 

@@ -22,7 +22,7 @@ func (a *RhythmoneAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapter
 	request, uri, errs = a.preProcess(request, errs)
 	if request != nil {
 		reqJSON, err := json.Marshal(request)
-		if err != nil {
+		if err != nil { 
 			errs = append(errs, err)
 			return nil, errs
 		}

@@ -14,7 +14,7 @@ import (
 	"github.com/prebid/prebid-server/pbs"
 	"golang.org/x/net/context/ctxhttp"
 )
-
+ 
 type ConversantAdapter struct {
 	http *adapters.HTTPAdapter
 	URI  string
