@@ -37,6 +37,7 @@ const (
 	BidderImprovedigital BidderName = "improvedigital"
 	BidderIx             BidderName = "ix"
 	BidderLifestreet     BidderName = "lifestreet"
+	BidderNick           BidderName = "nick"
 	BidderOpenx          BidderName = "openx"
 	BidderPubmatic       BidderName = "pubmatic"
 	BidderPulsepoint     BidderName = "pulsepoint"
@@ -67,6 +68,7 @@ var BidderMap = map[string]BidderName{
 	"improvedigital":  BidderImprovedigital,
 	"ix":              BidderIx,
 	"lifestreet":      BidderLifestreet,
+	"nick":            BidderNick,
 	"openx":           BidderOpenx,
 	"pubmatic":        BidderPubmatic,
 	"pulsepoint":      BidderPulsepoint,
@@ -112,12 +114,15 @@ type BidderParamValidator interface {
 // This will error if, for example, a Bidder gets added but no JSON schema is written for them.
 func NewBidderParamsValidator(schemaDirectory string) (BidderParamValidator, error) {
 	fileInfos, err := ioutil.ReadDir(schemaDirectory)
+	fmt.Println(schemaDirectory)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to read JSON schemas from directory %s. %v", schemaDirectory, err)
 	}
 
 	schemaContents := make(map[BidderName]string, 50)
+	fmt.Println(schemaContents)
 	schemas := make(map[BidderName]*gojsonschema.Schema, 50)
+	fmt.Println(schemas)
 	for _, fileInfo := range fileInfos {
 		bidderName := strings.TrimSuffix(fileInfo.Name(), ".json")
 		if _, isValid := BidderMap[bidderName]; !isValid {

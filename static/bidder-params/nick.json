@@ -1,0 +1,17 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "Nick Adapter Params",
+    "description": "A schema which validates params accepted by the Nick adapter.",
+    "type": "object",
+    "properties": {
+        "tagid": {
+            "type": "integer",
+            "description": "ad id."
+        },
+      "bidfloor" : {
+        "type": "number",
+        "description": "Minimum bid price that will be considered."
+        }
+    },
+    "required": ["tagid"]
+  }

@@ -1,0 +1,6 @@
+maintainer:
+  email: "nick@nick.com"
+capabilities:
+  site:
+    mediaTypes:
+      - banner
