@@ -1,78 +1,133 @@
 package emx_digital
 
 import (
-	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
-
-	// dev
-	"fmt"
-	"os"
 
 	"github.com/mxmCherry/openrtb"
 	"github.com/prebid/prebid-server/adapters"
 	"github.com/prebid/prebid-server/errortypes"
+	"github.com/prebid/prebid-server/openrtb_ext"
 )
 
-// --- globals ---
-// var Endpoint = "https://hb.emxdgt.com"
-
-// ---- type definitions ----
 type EmxDigitalAdapter struct {
 	endpoint string
 }
 
-type responseImp struct {
-	ID     string `json:"id"`
-	Price  string `json:"price"`
-	AdM    string `json:"adm"`
-	CrID   string `json:"crid"`
-	Width  uint64 `json:"w,omitempty"`
-	Height uint64 `json:"h,omitempty"`
-	Secure uint64 `json:"secure"`
-	tid    uint64 `json:"secure"`
+func buildEndpoint(endpoint string) string {
+	return endpoint + "?t=" + strconv.FormatInt(1000, 10) /* strconv.FormatInt(req.TimeoutMillis, 10) */ + "&ts=" + strconv.FormatInt(time.Now().Unix(), 10) + "&src=" + "emx_pbserver"
 }
 
-// --- functionality ---
-// unpack pbs requests into http requests to fetch bids
-// , req *pbs.PBSRequest
 func (a *EmxDigitalAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.RequestData, []error) {
-	now := time.Now()
-	// create endpoint
-	a.endpoint += "?t=" + strconv.FormatInt(1000, 10) /* strconv.FormatInt(req.TimeoutMillis, 10) */ + "&ts=" + strconv.FormatInt(now.Unix(), 10)
+	var errs []error
+	var adapterRequests []*adapters.RequestData
 
-	var errors = make([]error, 0)
+	adapterReq, errors := a.makeRequest(request)
+
+	if adapterReq != nil {
+		adapterRequests = append(adapterRequests, adapterReq)
+	}
+	errs = append(errs, errors...)
+
+	return adapterRequests, errors
+}
+
+func (a *EmxDigitalAdapter) makeRequest(request *openrtb.BidRequest) (*adapters.RequestData, []error) {
+	var errs []error
+
+	if err := preprocess(request); err != nil {
+		errs = append(errs, err)
+	}
+
+	fmt.Println("makeRequests")
+	requestJSON, err2 := json.Marshal(request)
+	if err2 != nil {
+		errs = append(errs, err2)
+		return nil, errs
+	}
+
+	os.Stdout.Write(requestJSON)
 
 	reqJSON, err := json.Marshal(request)
 	if err != nil {
-		errors = append(errors, err)
-		return nil, errors
+		errs = append(errs, err)
+		return nil, errs
 	}
 
 	headers := http.Header{}
 	headers.Add("Content-Type", "application/json;charset=utf-8")
 
-	os.Stdout.Write(reqJSON)
-	fmt.Printf("%T\n", request)
+	// build endpoint url for rtbx
+	// dont really need to put this in it's own function. could be good to error handle?
+	var rtbxEndpoint = buildEndpoint(a.endpoint)
 
-	return []*adapters.RequestData{{
+	return &adapters.RequestData{
 		Method:  "POST",
-		Uri:     a.endpoint,
+		Uri:     rtbxEndpoint,
 		Body:    reqJSON,
 		Headers: headers,
-	}}, errors
-
+	}, errs
 }
 
-// unpack server responses into bids.
+// handle request errors and formatting to be sent to EMX
+func preprocess(request *openrtb.BidRequest) error {
+	for i := 0; i < len(request.Imp); i++ {
+		var imp = request.Imp[i]
+		var bidderExt adapters.ExtImpBidder
+
+		if err := json.Unmarshal(imp.Ext, &bidderExt); err != nil {
+			return &errortypes.BadInput{
+				Message: err.Error(),
+			}
+		}
+
+		var emxExt openrtb_ext.ExtImpEmxDigital
+
+		if err := json.Unmarshal(bidderExt.Bidder, &emxExt); err != nil {
+			return &errortypes.BadInput{
+				Message: err.Error(),
+			}
+		}
+
+		emxExtJSON, err := json.Marshal(emxExt)
+		if err != nil {
+			return &errortypes.BadInput{
+				Message: err.Error(),
+			}
+		}
+
+		request.Imp[i].Ext = emxExtJSON
+		request.Imp[i].TagID = emxExt.TagID
+
+		if request.Imp[i].BidFloor != 0 {
+			request.Imp[i].BidFloor, err = strconv.ParseFloat(emxExt.BidFloor, 64)
+			if err != nil {
+				return &errortypes.BadInput{
+					Message: err.Error(),
+				}
+			}
+		}
+
+		if request.Imp[i].Banner != nil {
+			request.Imp[i].Banner.W = &request.Imp[i].Banner.Format[0].W
+			request.Imp[i].Banner.H = &request.Imp[i].Banner.Format[0].H
+		}
+
+	}
+
+	return nil
+}
+
+// MakeBids make the bids for the bid response.
 func (a *EmxDigitalAdapter) MakeBids(internalRequest *openrtb.BidRequest, externalRequest *adapters.RequestData, response *adapters.ResponseData) (*adapters.BidderResponse, []error) {
 
-	os.Stdout.Write(response.Body)
-	// fmt.Printf("%T\n", response)
-
 	if response.StatusCode == http.StatusNoContent {
+		// nick dev
+		fmt.Println("\n204 No Content!")
 		return nil, nil
 	}
 
@@ -88,7 +143,11 @@ func (a *EmxDigitalAdapter) MakeBids(internalRequest *openrtb.BidRequest, extern
 		}}
 	}
 
+	// nick dev
+	os.Stdout.Write(response.Body)
+
 	var bidResp openrtb.BidResponse
+
 	if err := json.Unmarshal(response.Body, &bidResp); err != nil {
 		return nil, []error{err}
 	}
@@ -97,43 +156,23 @@ func (a *EmxDigitalAdapter) MakeBids(internalRequest *openrtb.BidRequest, extern
 
 	for _, sb := range bidResp.SeatBid {
 		for i := range sb.Bid {
+			//nick dev
+			// temporary fix for impid from rtbx
+			sb.Bid[i].ImpID = sb.Bid[i].ID
+
 			bidResponse.Bids = append(bidResponse.Bids, &adapters.TypedBid{
 				Bid:     &sb.Bid[i],
 				BidType: "banner",
 			})
 		}
 	}
+
 	return bidResponse, nil
 
 }
 
-// --- helpers ---
-
-// dev only?
-func jsonPrettyPrint(in string) string {
-	var out bytes.Buffer
-	err := json.Indent(&out, []byte(in), "", "\t")
-	if err != nil {
-		return in
-	}
-	return out.String()
-}
-
-// logging for errors
-func BadInput(msg string) *errortypes.BadInput {
-	return &errortypes.BadInput{
-		Message: msg,
-	}
-}
-
-// logging for errors
-func BadServerResponse(msg string) *errortypes.BadServerResponse {
-	return &errortypes.BadServerResponse{
-		Message: msg,
-	}
-}
-
-// instantiate new Adapter for PBS
 func NewEmxDigitalBidder(endpoint string) *EmxDigitalAdapter {
-	return &EmxDigitalAdapter{endpoint}
+	return &EmxDigitalAdapter{
+		endpoint: endpoint,
+	}
 }
