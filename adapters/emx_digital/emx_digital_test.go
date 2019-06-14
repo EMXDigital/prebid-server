@@ -7,5 +7,5 @@ import (
 )
 
 func TestJsonSamples(t *testing.T) {
-	adapterstest.RunJSONBidderTest(t, "emx_digitaltest", NewEMXDigitalBidder("https://hb.emxdgt.com"))
+	adapterstest.RunJSONBidderTest(t, "emx_digitaltest", NewEmxDigitalBidder("https://hb.emxdgt.com"))
 }

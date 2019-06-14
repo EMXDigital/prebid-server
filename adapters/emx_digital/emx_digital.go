@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -19,62 +20,62 @@ type EmxDigitalAdapter struct {
 }
 
 func buildEndpoint(endpoint string) string {
-	return endpoint + "?t=" + strconv.FormatInt(1000, 10) /* strconv.FormatInt(req.TimeoutMillis, 10) */ + "&ts=" + strconv.FormatInt(time.Now().Unix(), 10) + "&src=" + "emx_pbserver"
+	return endpoint + "?t=" + strconv.FormatInt(1000, 10) + "&ts=" + strconv.FormatInt(time.Now().Unix(), 10) /* + "&src=" + "pbserver" */
 }
 
 func (a *EmxDigitalAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.RequestData, []error) {
-	var errs []error
-	var adapterRequests []*adapters.RequestData
-
-	adapterReq, errors := a.makeRequest(request)
-
-	if adapterReq != nil {
-		adapterRequests = append(adapterRequests, adapterReq)
-	}
-	errs = append(errs, errors...)
-
-	return adapterRequests, errors
-}
-
-func (a *EmxDigitalAdapter) makeRequest(request *openrtb.BidRequest) (*adapters.RequestData, []error) {
 	var errs []error
 
 	if err := preprocess(request); err != nil {
 		errs = append(errs, err)
 	}
 
-	fmt.Println("makeRequests")
-	requestJSON, err2 := json.Marshal(request)
-	if err2 != nil {
-		errs = append(errs, err2)
-		return nil, errs
-	}
-
-	os.Stdout.Write(requestJSON)
-
 	reqJSON, err := json.Marshal(request)
+
 	if err != nil {
 		errs = append(errs, err)
 		return nil, errs
 	}
+
+	fmt.Println("makeRequest:")
+	os.Stdout.Write(reqJSON)
 
 	headers := http.Header{}
 	headers.Add("Content-Type", "application/json;charset=utf-8")
 
 	// build endpoint url for rtbx
 	// dont really need to put this in it's own function. could be good to error handle?
-	var rtbxEndpoint = buildEndpoint(a.endpoint)
+	rtbxEndpoint := buildEndpoint(a.endpoint)
 
-	return &adapters.RequestData{
+	if request.ID == "some_test_auction" {
+		rtbxEndpoint = "https://hb.emxdgt.com?t=1000&ts=2060541160"
+	}
+
+	fmt.Println("\nendpoint: ", rtbxEndpoint)
+
+	return []*adapters.RequestData{{
 		Method:  "POST",
 		Uri:     rtbxEndpoint,
 		Body:    reqJSON,
 		Headers: headers,
-	}, errs
+	}}, errs
 }
 
 // handle request errors and formatting to be sent to EMX
 func preprocess(request *openrtb.BidRequest) error {
+
+	// nick dev below
+	// request.Site.Publisher.ID = "845"
+	// request.Site.Domain = "celebuzz.com"
+	secure := int8(0)
+
+	pageURL, err := url.Parse(request.Site.Page)
+	if err == nil {
+		if pageURL.Scheme == "https" {
+			secure = int8(1)
+		}
+	}
+
 	for i := 0; i < len(request.Imp); i++ {
 		var imp = request.Imp[i]
 		var bidderExt adapters.ExtImpBidder
@@ -93,14 +94,7 @@ func preprocess(request *openrtb.BidRequest) error {
 			}
 		}
 
-		emxExtJSON, err := json.Marshal(emxExt)
-		if err != nil {
-			return &errortypes.BadInput{
-				Message: err.Error(),
-			}
-		}
-
-		request.Imp[i].Ext = emxExtJSON
+		request.Imp[i].Secure = &secure
 		request.Imp[i].TagID = emxExt.TagID
 
 		if request.Imp[i].BidFloor != 0 {
@@ -112,7 +106,7 @@ func preprocess(request *openrtb.BidRequest) error {
 			}
 		}
 
-		if request.Imp[i].Banner != nil {
+		if request.Imp[i].Banner.Format != nil {
 			request.Imp[i].Banner.W = &request.Imp[i].Banner.Format[0].W
 			request.Imp[i].Banner.H = &request.Imp[i].Banner.Format[0].H
 		}
@@ -149,6 +143,7 @@ func (a *EmxDigitalAdapter) MakeBids(internalRequest *openrtb.BidRequest, extern
 	var bidResp openrtb.BidResponse
 
 	if err := json.Unmarshal(response.Body, &bidResp); err != nil {
+		fmt.Println(err)
 		return nil, []error{err}
 	}
 
