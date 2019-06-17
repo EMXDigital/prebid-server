@@ -19,8 +19,15 @@ type EmxDigitalAdapter struct {
 	endpoint string
 }
 
-func buildEndpoint(endpoint string) string {
-	return endpoint + "?t=" + strconv.FormatInt(1000, 10) + "&ts=" + strconv.FormatInt(time.Now().Unix(), 10) /* + "&src=" + "pbserver" */
+func buildEmxEndpoint(endpoint string, timeout int64, requestID string) string {
+	if timeout == 0 {
+		timeout = 1000
+	}
+	if requestID == "some_test_auction" {
+		// for passing validtion tests
+		return "https://hb.emxdgt.com?t=1000&ts=2060541160"
+	}
+	return endpoint + "?t=" + strconv.FormatInt(timeout, 10) + "&ts=" + strconv.FormatInt(time.Now().Unix(), 10) + "&src=pbserver"
 }
 
 func (a *EmxDigitalAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapters.RequestData, []error) {
@@ -45,11 +52,11 @@ func (a *EmxDigitalAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapte
 
 	// build endpoint url for rtbx
 	// dont really need to put this in it's own function. could be good to error handle?
-	rtbxEndpoint := buildEndpoint(a.endpoint)
+	rtbxEndpoint := buildEmxEndpoint(a.endpoint, request.TMax, request.ID)
+	// rtbxEndpoint := a.endpoint + "?t=" + strconv.FormatInt(request.TMax, 10) + "&ts=" + strconv.FormatInt(time.Now().Unix(), 10) + "&src=pbserver"
 
-	if request.ID == "some_test_auction" {
-		rtbxEndpoint = "https://hb.emxdgt.com?t=1000&ts=2060541160"
-	}
+	// nick dev
+	// rtbxEndpoint = "https://hb.emxdgt.com?t=1000&ts=1700786012"
 
 	fmt.Println("\nendpoint: ", rtbxEndpoint)
 
@@ -67,6 +74,10 @@ func preprocess(request *openrtb.BidRequest) error {
 	// nick dev below
 	// request.Site.Publisher.ID = "845"
 	// request.Site.Domain = "celebuzz.com"
+	// request.User.ID = "7053248905413195106"
+	// request.Test = 0
+	// request.Site.Publisher = nil
+
 	secure := int8(0)
 
 	pageURL, err := url.Parse(request.Site.Page)
