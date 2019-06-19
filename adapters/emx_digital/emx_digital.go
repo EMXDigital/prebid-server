@@ -44,21 +44,14 @@ func (a *EmxDigitalAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapte
 		return nil, errs
 	}
 
+	// nick dev
 	fmt.Println("makeRequest:")
 	os.Stdout.Write(reqJSON)
 
 	headers := http.Header{}
 	headers.Add("Content-Type", "application/json;charset=utf-8")
 
-	// build endpoint url for rtbx
-	// dont really need to put this in it's own function. could be good to error handle?
 	rtbxEndpoint := buildEmxEndpoint(a.endpoint, request.TMax, request.ID)
-	// rtbxEndpoint := a.endpoint + "?t=" + strconv.FormatInt(request.TMax, 10) + "&ts=" + strconv.FormatInt(time.Now().Unix(), 10) + "&src=pbserver"
-
-	// nick dev
-	// rtbxEndpoint = "https://hb.emxdgt.com?t=1000&ts=1700786012"
-
-	fmt.Println("\nendpoint: ", rtbxEndpoint)
 
 	return []*adapters.RequestData{{
 		Method:  "POST",
@@ -70,13 +63,6 @@ func (a *EmxDigitalAdapter) MakeRequests(request *openrtb.BidRequest) ([]*adapte
 
 // handle request errors and formatting to be sent to EMX
 func preprocess(request *openrtb.BidRequest) error {
-
-	// nick dev below
-	// request.Site.Publisher.ID = "845"
-	// request.Site.Domain = "celebuzz.com"
-	// request.User.ID = "7053248905413195106"
-	// request.Test = 0
-	// request.Site.Publisher = nil
 
 	secure := int8(0)
 
@@ -131,8 +117,6 @@ func preprocess(request *openrtb.BidRequest) error {
 func (a *EmxDigitalAdapter) MakeBids(internalRequest *openrtb.BidRequest, externalRequest *adapters.RequestData, response *adapters.ResponseData) (*adapters.BidderResponse, []error) {
 
 	if response.StatusCode == http.StatusNoContent {
-		// nick dev
-		fmt.Println("\n204 No Content!")
 		return nil, nil
 	}
 
@@ -162,8 +146,6 @@ func (a *EmxDigitalAdapter) MakeBids(internalRequest *openrtb.BidRequest, extern
 
 	for _, sb := range bidResp.SeatBid {
 		for i := range sb.Bid {
-			//nick dev
-			// temporary fix for impid from rtbx
 			sb.Bid[i].ImpID = sb.Bid[i].ID
 
 			bidResponse.Bids = append(bidResponse.Bids, &adapters.TypedBid{
