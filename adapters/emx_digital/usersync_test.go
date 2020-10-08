@@ -23,7 +23,7 @@ func TestEMXDigitalSyncerTCF1(t *testing.T) {
 			Consent: "BOPVK28OVJoTBABABAENBs-AAAAhuAKAANAAoACwAGgAPAAxAB0AHgAQAAiABOADkA",
 		},
 		CCPA: ccpa.Policy{
-			Value: "1NYN",
+			Consent: "1NYN",
 		},
 	})
 

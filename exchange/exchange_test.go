@@ -48,6 +48,9 @@ func TestNewExchange(t *testing.T) {
 			ExpectedTimeMillis: 20,
 		},
 		Adapters: blankAdapterConfig(openrtb_ext.BidderList()),
+		GDPR: config.GDPR{
+			EEACountries: []string{"FIN", "FRA", "GUF"},
+		},
 	}
 
 	currencyConverter := currencies.NewRateConverter(&http.Client{}, "", time.Duration(0))
@@ -126,7 +129,7 @@ func TestCharacterEscape(t *testing.T) {
 	var errList []error
 
 	/* 	4) Build bid response 									*/
-	bidResp, err := e.buildBidResponse(context.Background(), liveAdapters, adapterBids, bidRequest, adapterExtra, nil, nil, errList)
+	bidResp, err := e.buildBidResponse(context.Background(), liveAdapters, adapterBids, bidRequest, adapterExtra, nil, nil, true, errList)
 
 	/* 	5) Assert we have no errors and one '&' character as we are supposed to 	*/
 	if err != nil {
@@ -245,7 +248,7 @@ func TestDebugBehaviour(t *testing.T) {
 		}
 
 		// Run test
-		outBidResponse, err := e.HoldAuction(context.Background(), bidRequest, &emptyUsersync{}, pbsmetrics.Labels{}, &categoriesFetcher, nil)
+		outBidResponse, err := e.HoldAuction(context.Background(), bidRequest, &emptyUsersync{}, pbsmetrics.Labels{}, &config.Account{}, &categoriesFetcher, nil)
 
 		// Assert no HoldAuction error
 		assert.NoErrorf(t, err, "%s. ex.HoldAuction returned an error: %v \n", test.desc, err)
@@ -271,9 +274,197 @@ func TestDebugBehaviour(t *testing.T) {
 	}
 }
 
-func TestGetBidCacheInfo(t *testing.T) {
+func TestReturnCreativeEndToEnd(t *testing.T) {
+	sampleAd := "<?xml version=\"1.0\" encoding=\"UTF-8\"?><VAST ...></VAST>"
+
+	// Define test cases
+	type aTest struct {
+		desc   string
+		inExt  json.RawMessage
+		outAdM string
+	}
+	testGroups := []struct {
+		groupDesc   string
+		testCases   []aTest
+		expectError bool
+	}{
+		{
+			groupDesc: "Invalid or malformed bidRequest Ext, expect error in these scenarios",
+			testCases: []aTest{
+				{
+					desc:  "Malformed ext in bidRequest",
+					inExt: json.RawMessage(`malformed`),
+				},
+				{
+					desc:  "empty cache field",
+					inExt: json.RawMessage(`{"prebid":{"cache":{}}}`),
+				},
+			},
+			expectError: true,
+		},
+		{
+			groupDesc: "Valid bidRequest Ext but no returnCreative value specified, default to returning creative",
+			testCases: []aTest{
+				{
+					"Nil ext in bidRequest",
+					nil,
+					sampleAd,
+				},
+				{
+					"empty ext",
+					json.RawMessage(``),
+					sampleAd,
+				},
+				{
+					"bids doesn't come with returnCreative value",
+					json.RawMessage(`{"prebid":{"cache":{"bids":{}}}}`),
+					sampleAd,
+				},
+				{
+					"vast doesn't come with returnCreative value",
+					json.RawMessage(`{"prebid":{"cache":{"vastXml":{}}}}`),
+					sampleAd,
+				},
+			},
+		},
+		{
+			groupDesc: "Bids field comes with returnCreative value",
+			testCases: []aTest{
+				{
+					"Bids returnCreative set to true, return ad markup in response",
+					json.RawMessage(`{"prebid":{"cache":{"bids":{"returnCreative":true}}}}`),
+					sampleAd,
+				},
+				{
+					"Bids returnCreative set to false, don't return ad markup in response",
+					json.RawMessage(`{"prebid":{"cache":{"bids":{"returnCreative":false}}}}`),
+					"",
+				},
+			},
+		},
+		{
+			groupDesc: "Vast field comes with returnCreative value",
+			testCases: []aTest{
+				{
+					"Vast returnCreative set to true, return ad markup in response",
+					json.RawMessage(`{"prebid":{"cache":{"vastXml":{"returnCreative":true}}}}`),
+					sampleAd,
+				},
+				{
+					"Vast returnCreative set to false, don't return ad markup in response",
+					json.RawMessage(`{"prebid":{"cache":{"vastXml":{"returnCreative":false}}}}`),
+					"",
+				},
+			},
+		},
+		{
+			groupDesc: "Both Bids and Vast come with their own returnCreative value",
+			testCases: []aTest{
+				{
+					"Both false, expect empty AdM",
+					json.RawMessage(`{"prebid":{"cache":{"bids":{"returnCreative":false},"vastXml":{"returnCreative":false}}}}`),
+					"",
+				},
+				{
+					"Bids returnCreative is true, expect valid AdM",
+					json.RawMessage(`{"prebid":{"cache":{"bids":{"returnCreative":true},"vastXml":{"returnCreative":false}}}}`),
+					sampleAd,
+				},
+				{
+					"Vast returnCreative is true, expect valid AdM",
+					json.RawMessage(`{"prebid":{"cache":{"bids":{"returnCreative":false},"vastXml":{"returnCreative":true}}}}`),
+					sampleAd,
+				},
+				{
+					"Both field's returnCreative set to true, expect valid AdM",
+					json.RawMessage(`{"prebid":{"cache":{"bids":{"returnCreative":true},"vastXml":{"returnCreative":true}}}}`),
+					sampleAd,
+				},
+			},
+		},
+	}
+
+	// Init an exchange to run an auction from
+	noBidServer := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }
+	server := httptest.NewServer(http.HandlerFunc(noBidServer))
+	defer server.Close()
+
+	categoriesFetcher, error := newCategoryFetcher("./test/category-mapping")
+	if error != nil {
+		t.Errorf("Failed to create a category Fetcher: %v", error)
+	}
+
+	bidderImpl := &goodSingleBidder{
+		httpRequest: &adapters.RequestData{
+			Method:  "POST",
+			Uri:     server.URL,
+			Body:    []byte("{\"key\":\"val\"}"),
+			Headers: http.Header{},
+		},
+		bidResponse: &adapters.BidderResponse{
+			Bids: []*adapters.TypedBid{
+				{
+					Bid: &openrtb.Bid{AdM: sampleAd},
+				},
+			},
+		},
+	}
+
+	e := new(exchange)
+	e.adapterMap = map[openrtb_ext.BidderName]adaptedBidder{
+		openrtb_ext.BidderAppnexus: adaptBidder(bidderImpl, server.Client(), &config.Configuration{}, &metricsConfig.DummyMetricsEngine{}, openrtb_ext.BidderAppnexus),
+	}
+	e.cache = &wellBehavedCache{}
+	e.me = &metricsConf.DummyMetricsEngine{}
+	e.gDPR = gdpr.AlwaysAllow{}
+	e.currencyConverter = currencies.NewRateConverter(&http.Client{}, "", time.Duration(0))
+
+	// Define mock incoming bid requeset
+	mockBidRequest := &openrtb.BidRequest{
+		ID: "some-request-id",
+		Imp: []openrtb.Imp{{
+			ID:     "some-impression-id",
+			Banner: &openrtb.Banner{Format: []openrtb.Format{{W: 300, H: 250}, {W: 300, H: 600}}},
+			Ext:    json.RawMessage(`{"appnexus": {"placementId": 1}}`),
+		}},
+		Site: &openrtb.Site{Page: "prebid.org", Ext: json.RawMessage(`{"amp":0}`)},
+	}
+
+	// Run tests
+	for _, testGroup := range testGroups {
+		for _, test := range testGroup.testCases {
+			mockBidRequest.Ext = test.inExt
+
+			// Run test
+			outBidResponse, err := e.HoldAuction(context.Background(), mockBidRequest, &emptyUsersync{}, pbsmetrics.Labels{}, &config.Account{}, &categoriesFetcher, nil)
+
+			// Assert return error, if any
+			if testGroup.expectError {
+				assert.Errorf(t, err, "HoldAuction expected to throw error for: %s - %s. \n", testGroup.groupDesc, test.desc)
+				continue
+			} else {
+				assert.NoErrorf(t, err, "%s: %s. HoldAuction error: %v \n", testGroup.groupDesc, test.desc, err)
+			}
+
+			// Assert returned bid
+			if !assert.NotNil(t, outBidResponse, "%s: %s. outBidResponse is nil \n", testGroup.groupDesc, test.desc) {
+				return
+			}
+			if !assert.NotEmpty(t, outBidResponse.SeatBid, "%s: %s. outBidResponse.SeatBid is empty \n", testGroup.groupDesc, test.desc) {
+				return
+			}
+			if !assert.NotEmpty(t, outBidResponse.SeatBid[0].Bid, "%s: %s. outBidResponse.SeatBid[0].Bid is empty \n", testGroup.groupDesc, test.desc) {
+				return
+			}
+			assert.Equal(t, test.outAdM, outBidResponse.SeatBid[0].Bid[0].AdM, "Ad markup string doesn't match in: %s - %s \n", testGroup.groupDesc, test.desc)
+		}
+	}
+}
+
+func TestGetBidCacheInfoEndToEnd(t *testing.T) {
 	testUUID := "CACHE_UUID_1234"
-	testExternalCacheHost := "https://www.externalprebidcache.net"
+	testExternalCacheScheme := "https"
+	testExternalCacheHost := "www.externalprebidcache.net"
 	testExternalCachePath := "endpoints/cache"
 
 	/* 1) An adapter 											*/
@@ -289,8 +480,9 @@ func TestGetBidCacheInfo(t *testing.T) {
 			Host: "www.internalprebidcache.net",
 		},
 		ExtCacheURL: config.ExternalCache{
-			Host: testExternalCacheHost,
-			Path: testExternalCachePath,
+			Scheme: testExternalCacheScheme,
+			Host:   testExternalCacheHost,
+			Path:   testExternalCachePath,
 		},
 	}
 	adapterList := make([]openrtb_ext.BidderName, 0, 2)
@@ -407,7 +599,7 @@ func TestGetBidCacheInfo(t *testing.T) {
 	var errList []error
 
 	/* 	4) Build bid response 									*/
-	bid_resp, err := e.buildBidResponse(context.Background(), liveAdapters, adapterBids, bidRequest, adapterExtra, auc, nil, errList)
+	bid_resp, err := e.buildBidResponse(context.Background(), liveAdapters, adapterBids, bidRequest, adapterExtra, auc, nil, true, errList)
 
 	/* 	5) Assert we have no errors and the bid response we expected*/
 	assert.NoError(t, err, "[TestGetBidCacheInfo] buildBidResponse() threw an error")
@@ -418,7 +610,7 @@ func TestGetBidCacheInfo(t *testing.T) {
 				Seat: string(bidderName),
 				Bid: []openrtb.Bid{
 					{
-						Ext: json.RawMessage(`{ "prebid": { "cache": { "bids": { "cacheId": "` + testUUID + `", "url": "` + testExternalCacheHost + `/` + testExternalCachePath + `?uuid=` + testUUID + `" }, "key": "", "url": "" }`),
+						Ext: json.RawMessage(`{ "prebid": { "cache": { "bids": { "cacheId": "` + testUUID + `", "url": "` + testExternalCacheScheme + `://` + testExternalCacheHost + `/` + testExternalCachePath + `?uuid=` + testUUID + `" }, "key": "", "url": "" }`),
 					},
 				},
 			},
@@ -433,7 +625,7 @@ func TestGetBidCacheInfo(t *testing.T) {
 
 	assert.Equal(t, expCacheUUID, cacheUUID, "[TestGetBidCacheInfo] cacheId field in ext should equal \"%s\" \n", expCacheUUID)
 
-	// compare cache UUID
+	// compare cache URL
 	expCacheURL, err := jsonparser.GetString(expectedBidResponse.SeatBid[0].Bid[0].Ext, "prebid", "cache", "bids", "url")
 	assert.NoErrorf(t, err, "[TestGetBidCacheInfo] Error found while trying to json parse the url field from expected build response. Message: %v \n", err)
 
@@ -441,6 +633,194 @@ func TestGetBidCacheInfo(t *testing.T) {
 	assert.NoErrorf(t, err, "[TestGetBidCacheInfo] Error found while trying to json parse the url field from actual build response. Message: %v \n", err)
 
 	assert.Equal(t, expCacheURL, cacheURL, "[TestGetBidCacheInfo] cacheId field in ext should equal \"%s\" \n", expCacheURL)
+}
+
+func TestBidReturnsCreative(t *testing.T) {
+	sampleAd := "<?xml version=\"1.0\" encoding=\"UTF-8\"?><VAST ...></VAST>"
+	sampleOpenrtbBid := &openrtb.Bid{ID: "some-bid-id", AdM: sampleAd}
+
+	// Define test cases
+	testCases := []struct {
+		description            string
+		inReturnCreative       bool
+		expectedCreativeMarkup string
+	}{
+		{
+			"returnCreative set to true, expect a full creative markup string in returned bid",
+			true,
+			sampleAd,
+		},
+		{
+			"returnCreative set to false, expect empty creative markup string in returned bid",
+			false,
+			"",
+		},
+	}
+
+	// Test set up
+	sampleBids := []*pbsOrtbBid{
+		{
+			bid:        sampleOpenrtbBid,
+			bidType:    openrtb_ext.BidTypeBanner,
+			bidTargets: map[string]string{},
+		},
+	}
+	sampleAuction := &auction{cacheIds: map[*openrtb.Bid]string{sampleOpenrtbBid: "CACHE_UUID_1234"}}
+
+	noBidHandler := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }
+	server := httptest.NewServer(http.HandlerFunc(noBidHandler))
+	defer server.Close()
+
+	bidderImpl := &goodSingleBidder{
+		httpRequest: &adapters.RequestData{
+			Method:  "POST",
+			Uri:     server.URL,
+			Body:    []byte("{\"key\":\"val\"}"),
+			Headers: http.Header{},
+		},
+		bidResponse: &adapters.BidderResponse{},
+	}
+	e := new(exchange)
+	e.adapterMap = map[openrtb_ext.BidderName]adaptedBidder{
+		openrtb_ext.BidderAppnexus: adaptBidder(bidderImpl, server.Client(), &config.Configuration{}, &metricsConfig.DummyMetricsEngine{}, openrtb_ext.BidderAppnexus),
+	}
+	e.cache = &wellBehavedCache{}
+	e.me = &metricsConf.DummyMetricsEngine{}
+	e.gDPR = gdpr.AlwaysAllow{}
+	e.currencyConverter = currencies.NewRateConverter(&http.Client{}, "", time.Duration(0))
+
+	//Run tests
+	for _, test := range testCases {
+		resultingBids, resultingErrs := e.makeBid(sampleBids, sampleAuction, test.inReturnCreative)
+
+		assert.Equal(t, 0, len(resultingErrs), "%s. Test should not return errors \n", test.description)
+		assert.Equal(t, test.expectedCreativeMarkup, resultingBids[0].AdM, "%s. Ad markup string doesn't match expected \n", test.description)
+	}
+}
+
+func TestGetBidCacheInfo(t *testing.T) {
+	bid := &openrtb.Bid{ID: "42"}
+	testCases := []struct {
+		description      string
+		scheme           string
+		host             string
+		path             string
+		bid              *pbsOrtbBid
+		auction          *auction
+		expectedFound    bool
+		expectedCacheID  string
+		expectedCacheURL string
+	}{
+		{
+			description:      "JSON Cache ID",
+			scheme:           "https",
+			host:             "prebid.org",
+			path:             "cache",
+			bid:              &pbsOrtbBid{bid: bid},
+			auction:          &auction{cacheIds: map[*openrtb.Bid]string{bid: "anyID"}},
+			expectedFound:    true,
+			expectedCacheID:  "anyID",
+			expectedCacheURL: "https://prebid.org/cache?uuid=anyID",
+		},
+		{
+			description:      "VAST Cache ID",
+			scheme:           "https",
+			host:             "prebid.org",
+			path:             "cache",
+			bid:              &pbsOrtbBid{bid: bid},
+			auction:          &auction{vastCacheIds: map[*openrtb.Bid]string{bid: "anyID"}},
+			expectedFound:    true,
+			expectedCacheID:  "anyID",
+			expectedCacheURL: "https://prebid.org/cache?uuid=anyID",
+		},
+		{
+			description:      "Cache ID Not Found",
+			scheme:           "https",
+			host:             "prebid.org",
+			path:             "cache",
+			bid:              &pbsOrtbBid{bid: bid},
+			auction:          &auction{},
+			expectedFound:    false,
+			expectedCacheID:  "",
+			expectedCacheURL: "",
+		},
+		{
+			description:      "Scheme Not Provided",
+			host:             "prebid.org",
+			path:             "cache",
+			bid:              &pbsOrtbBid{bid: bid},
+			auction:          &auction{cacheIds: map[*openrtb.Bid]string{bid: "anyID"}},
+			expectedFound:    true,
+			expectedCacheID:  "anyID",
+			expectedCacheURL: "prebid.org/cache?uuid=anyID",
+		},
+		{
+			description:      "Host And Path Not Provided - Without Scheme",
+			bid:              &pbsOrtbBid{bid: bid},
+			auction:          &auction{cacheIds: map[*openrtb.Bid]string{bid: "anyID"}},
+			expectedFound:    true,
+			expectedCacheID:  "anyID",
+			expectedCacheURL: "",
+		},
+		{
+			description:      "Host And Path Not Provided - With Scheme",
+			scheme:           "https",
+			bid:              &pbsOrtbBid{bid: bid},
+			auction:          &auction{cacheIds: map[*openrtb.Bid]string{bid: "anyID"}},
+			expectedFound:    true,
+			expectedCacheID:  "anyID",
+			expectedCacheURL: "",
+		},
+		{
+			description:      "Nil Bid",
+			scheme:           "https",
+			host:             "prebid.org",
+			path:             "cache",
+			bid:              nil,
+			auction:          &auction{cacheIds: map[*openrtb.Bid]string{bid: "anyID"}},
+			expectedFound:    false,
+			expectedCacheID:  "",
+			expectedCacheURL: "",
+		},
+		{
+			description:      "Nil Embedded Bid",
+			scheme:           "https",
+			host:             "prebid.org",
+			path:             "cache",
+			bid:              &pbsOrtbBid{bid: nil},
+			auction:          &auction{cacheIds: map[*openrtb.Bid]string{bid: "anyID"}},
+			expectedFound:    false,
+			expectedCacheID:  "",
+			expectedCacheURL: "",
+		},
+		{
+			description:      "Nil Auction",
+			scheme:           "https",
+			host:             "prebid.org",
+			path:             "cache",
+			bid:              &pbsOrtbBid{bid: bid},
+			auction:          nil,
+			expectedFound:    false,
+			expectedCacheID:  "",
+			expectedCacheURL: "",
+		},
+	}
+
+	for _, test := range testCases {
+		exchange := &exchange{
+			cache: &mockCache{
+				scheme: test.scheme,
+				host:   test.host,
+				path:   test.path,
+			},
+		}
+
+		cacheInfo, found := exchange.getBidCacheInfo(test.bid, test.auction)
+
+		assert.Equal(t, test.expectedFound, found, test.description+":found")
+		assert.Equal(t, test.expectedCacheID, cacheInfo.CacheId, test.description+":id")
+		assert.Equal(t, test.expectedCacheURL, cacheInfo.Url, test.description+":url")
+	}
 }
 
 func TestBidResponseCurrency(t *testing.T) {
@@ -577,7 +957,7 @@ func TestBidResponseCurrency(t *testing.T) {
 
 	// Run tests
 	for i := range testCases {
-		actualBidResp, err := e.buildBidResponse(context.Background(), liveAdapters, testCases[i].adapterBids, bidRequest, adapterExtra, nil, nil, errList)
+		actualBidResp, err := e.buildBidResponse(context.Background(), liveAdapters, testCases[i].adapterBids, bidRequest, adapterExtra, nil, nil, true, errList)
 		assert.NoError(t, err, fmt.Sprintf("[TEST_FAILED] e.buildBidResponse resturns error in test: %s Error message: %s \n", testCases[i].description, err))
 		assert.Equalf(t, testCases[i].expectedBidResponse, actualBidResp, fmt.Sprintf("[TEST_FAILED] Objects must be equal for test: %s \n Expected: >>%s<< \n Actual: >>%s<< ", testCases[i].description, testCases[i].expectedBidResponse.Ext, actualBidResp.Ext))
 	}
@@ -622,7 +1002,7 @@ func TestRaceIntegration(t *testing.T) {
 	theMetrics := pbsmetrics.NewMetrics(metrics.NewRegistry(), openrtb_ext.BidderList(), config.DisabledMetrics{})
 	currencyConverter := currencies.NewRateConverter(&http.Client{}, "", time.Duration(0))
 	ex := NewExchange(server.Client(), &wellBehavedCache{}, cfg, theMetrics, adapters.ParseBidderInfos(cfg.Adapters, "../static/bidder-info", openrtb_ext.BidderList()), gdpr.AlwaysAllow{}, currencyConverter)
-	_, err := ex.HoldAuction(context.Background(), newRaceCheckingRequest(t), &emptyUsersync{}, pbsmetrics.Labels{}, &categoriesFetcher, nil)
+	_, err := ex.HoldAuction(context.Background(), newRaceCheckingRequest(t), &emptyUsersync{}, pbsmetrics.Labels{}, &config.Account{}, &categoriesFetcher, nil)
 	if err != nil {
 		t.Errorf("HoldAuction returned unexpected error: %v", err)
 	}
@@ -809,7 +1189,7 @@ func TestPanicRecoveryHighLevel(t *testing.T) {
 	if error != nil {
 		t.Errorf("Failed to create a category Fetcher: %v", error)
 	}
-	_, err := e.HoldAuction(context.Background(), request, &emptyUsersync{}, pbsmetrics.Labels{}, &categoriesFetcher, nil)
+	_, err := e.HoldAuction(context.Background(), request, &emptyUsersync{}, pbsmetrics.Labels{}, &config.Account{}, &categoriesFetcher, nil)
 	if err != nil {
 		t.Errorf("HoldAuction returned unexpected error: %v", err)
 	}
@@ -902,12 +1282,22 @@ func runSpec(t *testing.T, filename string, spec *exchangeSpec) {
 		t.Fatalf("%s: Failed to parse aliases", filename)
 	}
 
+	var s struct{}
+	eeac := make(map[string]struct{})
+	for _, c := range []string{"FIN", "FRA", "GUF"} {
+		eeac[c] = s
+	}
+
 	privacyConfig := config.Privacy{
 		CCPA: config.CCPA{
 			Enforce: spec.EnforceCCPA,
 		},
 		LMT: config.LMT{
 			Enforce: spec.EnforceLMT,
+		},
+		GDPR: config.GDPR{
+			UsersyncIfAmbiguous: !spec.AssumeGDPRApplies,
+			EEACountriesMap:     eeac,
 		},
 	}
 
@@ -922,7 +1312,7 @@ func runSpec(t *testing.T, filename string, spec *exchangeSpec) {
 		*debugLog = *spec.DebugLog
 		debugLog.Regexp = regexp.MustCompile(`[<>]`)
 	}
-	bid, err := ex.HoldAuction(context.Background(), &spec.IncomingRequest.OrtbRequest, mockIdFetcher(spec.IncomingRequest.Usersyncs), pbsmetrics.Labels{}, &categoriesFetcher, debugLog)
+	bid, err := ex.HoldAuction(context.Background(), &spec.IncomingRequest.OrtbRequest, mockIdFetcher(spec.IncomingRequest.Usersyncs), pbsmetrics.Labels{}, &config.Account{}, &categoriesFetcher, debugLog)
 	responseTimes := extractResponseTimes(t, filename, bid)
 	for _, bidderName := range biddersInAuction {
 		if _, ok := responseTimes[bidderName]; !ok {
@@ -1031,9 +1421,9 @@ func newExchangeForTests(t *testing.T, filename string, expectations map[string]
 		me:                  metricsConf.NewMetricsEngine(&config.Configuration{}, openrtb_ext.BidderList()),
 		cache:               &wellBehavedCache{},
 		cacheTime:           0,
-		gDPR:                gdpr.AlwaysAllow{},
+		gDPR:                gdpr.AlwaysFail{},
 		currencyConverter:   currencies.NewRateConverter(&http.Client{}, "", time.Duration(0)),
-		UsersyncIfAmbiguous: false,
+		UsersyncIfAmbiguous: privacyConfig.GDPR.UsersyncIfAmbiguous,
 		privacyConfig:       privacyConfig,
 	}
 }
@@ -1606,6 +1996,78 @@ func TestBidRejectionErrors(t *testing.T) {
 	}
 }
 
+func TestCategoryMappingTwoBiddersOneBidEachNoCategorySamePrice(t *testing.T) {
+
+	categoriesFetcher, error := newCategoryFetcher("./test/category-mapping")
+	if error != nil {
+		t.Errorf("Failed to create a category Fetcher: %v", error)
+	}
+
+	requestExt := newExtRequestTranslateCategories(nil)
+
+	targData := &targetData{
+		priceGranularity: requestExt.Prebid.Targeting.PriceGranularity,
+		includeWinners:   true,
+	}
+
+	requestExt.Prebid.Targeting.DurationRangeSec = []int{30}
+	requestExt.Prebid.Targeting.IncludeBrandCategory.WithCategory = false
+
+	cats1 := []string{"IAB1-3"}
+	cats2 := []string{"IAB1-4"}
+
+	bidApn1 := openrtb.Bid{ID: "bid_idApn1", ImpID: "imp_idApn1", Price: 10.0000, Cat: cats1, W: 1, H: 1}
+	bidApn2 := openrtb.Bid{ID: "bid_idApn2", ImpID: "imp_idApn2", Price: 10.0000, Cat: cats2, W: 1, H: 1}
+
+	bid1_Apn1 := pbsOrtbBid{&bidApn1, "video", nil, &openrtb_ext.ExtBidPrebidVideo{Duration: 30}, 0}
+	bid1_Apn2 := pbsOrtbBid{&bidApn2, "video", nil, &openrtb_ext.ExtBidPrebidVideo{Duration: 30}, 0}
+
+	innerBidsApn1 := []*pbsOrtbBid{
+		&bid1_Apn1,
+	}
+
+	innerBidsApn2 := []*pbsOrtbBid{
+		&bid1_Apn2,
+	}
+
+	for i := 1; i < 10; i++ {
+		adapterBids := make(map[openrtb_ext.BidderName]*pbsOrtbSeatBid)
+
+		seatBidApn1 := pbsOrtbSeatBid{innerBidsApn1, "USD", nil, nil}
+		bidderNameApn1 := openrtb_ext.BidderName("appnexus1")
+
+		seatBidApn2 := pbsOrtbSeatBid{innerBidsApn2, "USD", nil, nil}
+		bidderNameApn2 := openrtb_ext.BidderName("appnexus2")
+
+		adapterBids[bidderNameApn1] = &seatBidApn1
+		adapterBids[bidderNameApn2] = &seatBidApn2
+
+		bidCategory, adapterBids, rejections, err := applyCategoryMapping(nil, &requestExt, adapterBids, categoriesFetcher, targData)
+
+		assert.NoError(t, err, "Category mapping error should be empty")
+		assert.Len(t, rejections, 1, "There should be 1 bid rejection message")
+		assert.Regexpf(t, regexp.MustCompile(`bid rejected \[bid ID: bid_idApn(1|2)\] reason: Bid was deduplicated`), rejections[0], "Rejection message did not match expected")
+		assert.Len(t, bidCategory, 1, "Bidders category mapping should have only one element")
+
+		var resultBid string
+		for bidId := range bidCategory {
+			resultBid = bidId
+		}
+
+		if resultBid == "bid_idApn1" {
+			assert.Nil(t, seatBidApn2.bids, "Appnexus_2 seat bid should not have any bids back")
+			assert.Len(t, seatBidApn1.bids, 1, "Appnexus_1 seat bid should have only one back")
+
+		} else {
+			assert.Nil(t, seatBidApn1.bids, "Appnexus_1 seat bid should not have any bids back")
+			assert.Len(t, seatBidApn2.bids, 1, "Appnexus_2 seat bid should have only one back")
+
+		}
+
+	}
+
+}
+
 func TestUpdateRejections(t *testing.T) {
 	rejections := []string{}
 
@@ -1882,12 +2344,13 @@ func TestUpdateHbPbCatDur(t *testing.T) {
 }
 
 type exchangeSpec struct {
-	IncomingRequest  exchangeRequest        `json:"incomingRequest"`
-	OutgoingRequests map[string]*bidderSpec `json:"outgoingRequests"`
-	Response         exchangeResponse       `json:"response,omitempty"`
-	EnforceCCPA      bool                   `json:"enforceCcpa"`
-	EnforceLMT       bool                   `json:"enforceLmt"`
-	DebugLog         *DebugLog              `json:"debuglog,omitempty"`
+	IncomingRequest   exchangeRequest        `json:"incomingRequest"`
+	OutgoingRequests  map[string]*bidderSpec `json:"outgoingRequests"`
+	Response          exchangeResponse       `json:"response,omitempty"`
+	EnforceCCPA       bool                   `json:"enforceCcpa"`
+	EnforceLMT        bool                   `json:"enforceLmt"`
+	AssumeGDPRApplies bool                   `json:"assume_gdpr_applies"`
+	DebugLog          *DebugLog              `json:"debuglog,omitempty"`
 }
 
 type exchangeRequest struct {
@@ -2090,8 +2553,8 @@ func mockSlowHandler(delay time.Duration, statusCode int, body string) http.Hand
 
 type wellBehavedCache struct{}
 
-func (c *wellBehavedCache) GetExtCacheData() (string, string) {
-	return "www.pbcserver.com", "/pbcache/endpoint"
+func (c *wellBehavedCache) GetExtCacheData() (scheme string, host string, path string) {
+	return "https", "www.pbcserver.com", "/pbcache/endpoint"
 }
 
 func (c *wellBehavedCache) PutJson(ctx context.Context, values []pbc.Cacheable) ([]string, []error) {
